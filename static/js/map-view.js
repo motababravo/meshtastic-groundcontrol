@@ -12,7 +12,7 @@ let connectionLines = {};
  */
 function initializeMapView() {
     // Initialize OpenStreetMap
-    map = L.map('map').setView([39.4, -8.2], 4); // Portugal center
+    map = L.map('map').setView([42.75, 25.25], 7); // Bulgaria center
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
