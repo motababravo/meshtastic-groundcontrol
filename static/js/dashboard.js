@@ -59,7 +59,7 @@ const LazyLoadingManager = {
       graph: []
     };
     
-    // For map: filter by viewport bounds and temperature mode
+    // For map: filter by viewport bounds and map mode
     if (this.state.activeView === 'map' || this.state.activeView === 'both') {
       visibleNodes.map = this.filterNodesForMap(allNodes);
     }
@@ -76,14 +76,9 @@ const LazyLoadingManager = {
   filterNodesForMap(allNodes) {
     let filteredNodes = allNodes;
     
-    // Filter by temperature mode if active
-    if (window.mapModule && window.mapModule.isTemperatureMapActive()) {
-      filteredNodes = allNodes.filter(node => {
-        const hasTemp = node.environment_metrics && 
-                       typeof node.environment_metrics.temperature === 'number' && 
-                       !isNaN(node.environment_metrics.temperature);
-        return hasTemp;
-      });
+    // In data map modes (temperature, battery) only keep nodes with a value
+    if (window.mapModule && window.mapModule.isDataMapActive()) {
+      filteredNodes = allNodes.filter(node => window.mapModule.nodeHasMapModeData(node));
     }
     
     return filteredNodes;
@@ -638,7 +633,7 @@ function loadInitialData() {
       LazyLoadingManager.scheduleRender();
 
       // Load connections (only for normal mode)
-      if (!window.mapModule || !window.mapModule.isTemperatureMapActive()) {
+      if (!window.mapModule || !window.mapModule.isDataMapActive()) {
         const timeframeSelect = document.getElementById('timeframeSelect');
         const selectedHours = timeframeSelect ? timeframeSelect.value : '48';
         fetch(`/api/connections?hours=${selectedHours}`)
@@ -710,13 +705,12 @@ function loadMqttInfo() {
 window.loadMqttInfo = loadMqttInfo;
 
 function showNodeUpdatePing(nodeId) {
-  // Show ping on map if node has a marker (only if not in temperature map mode)
-  if (window.mapModule && 
-      (!window.mapModule.isTemperatureMapActive || !window.mapModule.isTemperatureMapActive())) {
+  // Show ping on map if node has a marker (only in normal map mode)
+  if (window.mapModule && !window.mapModule.isDataMapActive()) {
     window.mapModule.showPing(nodeId);
   }
 
-  // Always show ping on graph, even in temperature map mode
+  // Always show ping on graph, even in data map modes
   if (window.graphModule) {
     window.graphModule.showPing(nodeId);
   }
@@ -744,9 +738,8 @@ function updateConnection(connectionData) {
     window.graphModule.updateConnection(connectionData);
   }
 
-  // Update map connection only if not in temperature map mode
-  if (window.mapModule && 
-      !window.mapModule.isTemperatureMapActive()) {
+  // Update map connection only in normal map mode
+  if (window.mapModule && !window.mapModule.isDataMapActive()) {
     window.mapModule.updateConnection(connectionData);
   }
 }
@@ -1546,10 +1539,10 @@ function fitGraphToScreen() {
   }
 }
 
-// Temperature map functions moved to map-view.js
-window.toggleTemperatureMap = function() {
-  if (window.mapModule && window.mapModule.toggleTemperatureMap) {
-    window.mapModule.toggleTemperatureMap();
+// Map mode functions live in map-view.js
+window.cycleMapMode = function() {
+  if (window.mapModule && window.mapModule.cycleMapMode) {
+    window.mapModule.cycleMapMode();
   }
 };
 

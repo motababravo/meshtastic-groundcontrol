@@ -622,40 +622,72 @@ function addPositionQualityLegend() {
     legend.addTo(map);
 }
 
-// Temperature map functionality
-let isTemperatureMapActive = false;
+// Data map modes: 'normal' shows position-quality dots, the others show value labels
+const MAP_MODES = ['normal', 'temperature', 'battery'];
+const MAP_MODE_BUTTONS = {
+    // Button shows the mode a click switches to next
+    normal: { icon: '🌡️', title: 'Show Temperature Map' },
+    temperature: { icon: '🔋', title: 'Show Battery Map' },
+    battery: { icon: '🗺️', title: 'Show Normal Map' }
+};
+let mapMode = 'normal';
 
 /**
- * Toggle between normal and temperature map modes
+ * Cycle map modes: normal -> temperature -> battery -> normal
  */
-function toggleTemperatureMap() {
-    isTemperatureMapActive = !isTemperatureMapActive;
-    console.log('Temperature map toggled:', isTemperatureMapActive);
+function cycleMapMode() {
+    mapMode = MAP_MODES[(MAP_MODES.indexOf(mapMode) + 1) % MAP_MODES.length];
+    console.log('Map mode switched to:', mapMode);
     
     const btn = document.querySelector('.temperature-map-btn');
-    
-    if (isTemperatureMapActive) {
-        btn.textContent = '🗺️';
-        btn.title = 'Show Normal Map';
-        btn.classList.add('active');
-    } else {
-        btn.textContent = '🌡️';
-        btn.title = 'Show Temperature Map';
-        btn.classList.remove('active');
-    }
+    btn.textContent = MAP_MODE_BUTTONS[mapMode].icon;
+    btn.title = MAP_MODE_BUTTONS[mapMode].title;
+    btn.classList.toggle('active', mapMode !== 'normal');
     
     // Clear all existing markers first so they get re-rendered in the new mode
     clearMapMarkers();
     
+    // Restore connections when returning to normal mode
+    if (mapMode === 'normal') {
+        restoreConnections();
+    } else {
+        clearMapConnections();
+    }
+    
     // Force a complete refresh through the centralized system
     if (window.LazyLoadingManager) {
-        console.log('Calling LazyLoadingManager.forceRefresh()');
         window.LazyLoadingManager.forceRefresh();
     } else {
-        console.log('LazyLoadingManager not available, using fallback');
         // Fallback if centralized system is not available
         renderAllNodes();
     }
+}
+
+/**
+ * Label text and color for a node in the current data map mode,
+ * or null if the node has no value for it
+ */
+function getMapModeLabel(nodeData) {
+    if (mapMode === 'temperature') {
+        const temp = nodeData.environment_metrics && nodeData.environment_metrics.temperature;
+        if (typeof temp !== 'number' || isNaN(temp)) return null;
+        return { text: `${temp.toFixed(1)}°C`, color: getTemperatureColor(temp) };
+    }
+    if (mapMode === 'battery') {
+        const level = nodeData.battery_level;
+        if (typeof level !== 'number' || isNaN(level) || level <= 0) return null;
+        // Meshtastic reports 101 when the node runs on external power
+        if (level > 100) return { text: '🔌', color: '#3182ce' };
+        return { text: `${level}%`, color: getBatteryColor(level) };
+    }
+    return null;
+}
+
+/**
+ * Whether a node should be shown in the current map mode
+ */
+function nodeHasMapModeData(nodeData) {
+    return mapMode === 'normal' || getMapModeLabel(nodeData) !== null;
 }
 
 /**
@@ -666,8 +698,8 @@ function renderAllNodes() {
     // Clear existing markers completely
     clearMapMarkers();
     
-    // Clear connections in temperature mode
-    if (isTemperatureMapActive) {
+    // Clear connections in data map modes
+    if (mapMode !== 'normal') {
         clearMapConnections();
     }
     
@@ -685,7 +717,7 @@ function renderAllNodes() {
     console.log(`Rendered ${renderCount} nodes in non-lazy mode`);
     
     // Restore connections if in normal mode
-    if (!isTemperatureMapActive) {
+    if (mapMode === 'normal') {
         restoreConnections();
     }
 }
@@ -707,31 +739,21 @@ function renderNode(nodeData) {
         return false;
     }
 
-    console.log(`Rendering node ${nodeId}, temperature mode: ${isTemperatureMapActive}`);
-    
     let marker;
     
-    if (isTemperatureMapActive) {
-        console.log(`Temperature mode - checking node ${nodeId} for temperature data`);
-        // Temperature mode: only show nodes with temperature data
-        if (!nodeData.environment_metrics || typeof nodeData.environment_metrics.temperature !== 'number') {
-            console.log(`Node ${nodeId} skipped - no temperature data`);
-            return false; // Skip nodes without temperature data
-        }
+    if (mapMode !== 'normal') {
+        // Data map mode: only show nodes that have a value for this mode
+        const label = getMapModeLabel(nodeData);
+        if (!label) return false;
         
-        const temp = nodeData.environment_metrics.temperature;
-        const color = getTemperatureColor(temp);
-        
-        console.log(`Rendering temperature node ${nodeId}: ${temp}°C with color ${color}`);
-        
-        const tempLabel = L.divIcon({
+        const valueLabel = L.divIcon({
             className: 'temperature-label',
-            html: `<div style="background-color: ${color}; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; border: 1px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${temp.toFixed(1)}°C</div>`,
+            html: `<div style="background-color: ${label.color}; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; border: 1px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); white-space: nowrap;">${label.text}</div>`,
             iconSize: [50, 20],
             iconAnchor: [25, 10]
         });
         
-        marker = L.marker([lat, lon], { icon: tempLabel }).addTo(map);
+        marker = L.marker([lat, lon], { icon: valueLabel }).addTo(map);
     } else {
         console.log(`Rendering normal node ${nodeId}`);
         // Normal mode: show all nodes with position quality colors
@@ -854,6 +876,15 @@ function getTemperatureColor(temp) {
   }
 }
 
+function getBatteryColor(level) {
+  // Red (empty) -> yellow (half) -> green (full)
+  const t = Math.max(0, Math.min(1, level / 100));
+  const r = t < 0.5 ? 229 : Math.round(229 - (229 - 72) * (t - 0.5) * 2);
+  const g = t < 0.5 ? Math.round(62 + (201 - 62) * t * 2) : Math.round(201 - (201 - 187) * (t - 0.5) * 2);
+  const b = t < 0.5 ? Math.round(62 + (75 - 62) * t * 2) : Math.round(75 + (120 - 75) * (t - 0.5) * 2);
+  return `rgb(${r},${g},${b})`;
+}
+
 // Export functions for use in other modules
 window.mapModule = {
     initialize: initializeMapView,
@@ -872,6 +903,8 @@ window.mapModule = {
     getMarkers: () => mapMarkers,
     getMap: () => map,
     generateTooltip: generateEnhancedTooltip,
-    toggleTemperatureMap: toggleTemperatureMap,
-    isTemperatureMapActive: () => isTemperatureMapActive
+    cycleMapMode: cycleMapMode,
+    getMapMode: () => mapMode,
+    isDataMapActive: () => mapMode !== 'normal',
+    nodeHasMapModeData: nodeHasMapModeData
 };
